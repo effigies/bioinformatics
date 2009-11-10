@@ -1,0 +1,265 @@
+#!/usr/bin/env python
+#
+# plink2arff - Convert a PLINK RAW file to ARFF
+#
+# 2009 Chris Johnson
+
+from __future__ import division
+import sys
+import getopt
+import csv
+
+#
+# Matrix functions
+# I plan on switching to NumPy, but for now lists work fine
+#
+
+def transpose(matrix):
+	"""Transpose a matrix. Assumes an m x n matrix."""
+	return [list(m) for m in zip(*matrix)]
+
+def add_column(matrix, col):
+	return transpose(transpose(matrix) + [col])
+
+def toinf(init):
+	return xrange(init, sys.maxint)
+
+class PLINK:
+	names = []
+	subjects = []
+
+	famID = lambda self, n: self.subjects[n][0]
+	famIDs = lambda self: [subject[0] for subject in self.subjects]
+	indID = lambda self, n: self.subjects[n][1]
+	indIDs = lambda self: [subject[1] for subject in self.subjects]
+	patID = lambda self, n: self.subjects[n][2]
+	patIDs = lambda self: [subject[2] for subject in self.subjects]
+	matID = lambda self, n: self.subjects[n][3]
+	matIDs = lambda self: [subject[3] for subject in self.subjects]
+	sex = lambda self, n: self.subjects[n][4]
+	sexes = lambda self: [subject[4] for subject in self.subjects]
+	pheno = lambda self, n: self.subjects[n][5]
+	phenos = lambda self: [subject[5] for subject in self.subjects]
+	geno = lambda self, n: self.subjects[n][6:]
+	genos = lambda self: [subject[6:] for subject in self.subjects]
+
+	def check(self):
+		snps = transpose(self.genos())
+		if len(snps) != 2 * len(self.names):
+			raise ValueError("Genotypes should have the same length as SNP list")
+
+#	def writeRAW(self):
+
+class ARFF:
+	"""Build, validate, and write ARFF files"""
+	def __init__(self, relation = "DATA", attributes = [], data = [[]]):
+		self.relation = relation
+		self.attributes = attributes
+		self.data = data
+
+	def check(self):
+		if self.relation == "":
+			raise ValueError("ARFF relation must be defined.")
+
+		if not all([type(attr) is tuple for attr in self.attributes]):
+			raise TypeError("Attributes must be tuples.")
+		elif not all([type(attr[0]) is str for attr in self.attributes]):
+			raise TypeError("First element of each attribute must be a string.")
+		elif not all([type(attr[1]) is set for attr in self.attributes]):
+			raise TypeError("Second element of each attribute must be a set.")
+
+		dataT = transpose(self.data)
+
+		if len(dataT) != len(self.attributes):
+			raise ValueError("Data rows must have same length as attributes.")
+		elif any([set(values).isdisjoint(valid) for (name,valid), values in zip(self.attributes, dataT)]):
+			raise ValueError("Data rows may not have unexpected values.")
+
+	def importPLINK(self, file):
+		"""Import PLINK file
+
+Parameters
+	file	- open file, mode 'r'
+"""
+		reader = csv.reader(file, delimiter=' ')
+
+		snps = [name[:-2] for name in reader.next()[6:]]
+
+		individuals = [row for row in reader]
+		phenotypes = [i[5] for i in individuals]
+		genotypes = [i[6:] for i in individuals]
+
+		# We could build our sets e
+		attributes = [(name, set(["0","1","2","NA"])) for name in snps]
+		attributes.append(("CLASS", set(phenotypes)))
+
+		self.attributes = attributes
+		self.data = add_column(genotypes,phenotypes)
+
+		try:
+			self.check()
+		except ValueError as e:
+			print "Invalid file. Received exception:"
+			raise e
+
+	def filterMAF(self, threshold=0.01, skip="NA"):
+		"""Place a lower bound on minor allele frequency"""
+		new_attr = []
+		new_data = []
+
+		for (name, valid), snps in zip(self.attributes, transpose(self.data)):
+			n = 2 * len(snps)
+			s = sum([int(snp) for snp in snps if snp != skip])
+			if s / n >= threshold:
+				new_attr.append((name,valid))
+				new_data.append(snps)
+
+		self.attributes = new_attr
+		self.data = transpose(new_data)
+		self.check()
+
+	def filterSampleMiss(self, threshold=1.00, skip="NA"):
+		"""Place an upper bound on sample miss rate."""
+		new_data = []
+
+		for sample in self.data:
+			n = len(sample)
+			s = len([s for s in sample if s == skip])
+			if s / n <= threshold:
+				new_data.append(sample)
+
+		self.data = new_data
+		self.check()
+	
+	def filterSNPMiss(self, threshold=0.05, skip="NA"):
+		"""Place an upper bound on SNP miss rate."""
+		new_attr = []
+		new_data = []
+
+		for (name, valid), snps in zip(self.attributes, transpose(self.data)):
+			n = len(snps)
+			s = len([snp for snp in snps if snp == skip])
+			if s / n <= threshold:
+				new_attr.append((name,valid))
+				new_data.append(snps)
+
+		self.attributes = new_attr
+		self.data = transpose(new_data)
+		self.check()
+
+	def filterHWE(self, hwe, threshold, skip="NA"):
+		reader = csv.reader(hwe, delimiter=' ')
+		[reader.next() for i in range(3)]
+		
+		new_data = []
+		new_attr = []
+		for i, row, (name,valid), snps in zip(toinf(1),reader, self.attributes, self.data):
+			reader.next() and reader.next()
+			try:
+				if len(set(snps) - set("?")) == 1:
+					phwe = float(row[7])
+				else:
+					phwe = float(row[8])
+			except:
+					phwe = 3.0
+			if phwe >= threshold:
+				new_data.append(snps)
+				new_attr.append((name,valid))
+		
+		self.data = transpose(new_data)
+		self.attributes = new_attr
+		self.check()
+
+	def writeARFF(self,file):
+		output = ["@RELATION %s" % self.relation]
+		for name, valid in self.attributes:
+			output.append("@ATTRIBUTE %s {%s}" % (name, ','.join(sorted(valid))))
+		output.append("@DATA")
+		output.extend([",".join(row) for row in self.data])
+		file.write('\n'.join(output))
+
+#
+# Driver
+#
+
+def main(argv):
+	help = """Usage: %s [OPTIONS] [INPUT] OUTPUT
+Convert PLINK RAW file to ARFF format
+
+If INPUT is missing, assumes STDIN.
+
+Options:
+    --relation	-r	Relation name (default: DATA)
+    --maf	-m	Minor allele frequency threshold
+    --imiss	-i	Sample miss threshold
+    --smiss	-s	SNP miss threshold
+    --hwe	-e	Hardy-Weinberg equilibrium threshold (unimplemented)
+    --fhwe	-f	HWE file (implies --hwe)
+    --hweskip		Skip HWE thresholding (default, unless --hwe)
+    --miss		Notation for missed SNP (default: NA)
+    --help		display this help and exit
+	""" % argv[0].split('/')[-1]
+
+	try:
+		opts, args = getopt.getopt(argv[1:], "r:m:i:s:e:f:h",
+			["relation","maf","imiss","smiss","hwe",
+			"fhwe","hweskip","miss","help"])
+	except getopt.error, msg:
+		print msg
+		return 0
+
+	relation = "DATA"
+	maf = 0.01
+	imiss = 1.00
+	smiss = 0.05
+	skip = "NA"
+
+	# Parse arguments
+	for opt, arg in opts:
+		if opt in ('-r', '--relation'):
+			relation = arg
+		if opt in ('-m', '--maf'):
+			maf = arg
+		if opt in ('-i', '--imiss'):
+			imiss = arg
+		if opt in ('-s', '--smiss'):
+			smiss = arg
+		if opt in ('-e', '-f', '--hwe', '--fhwe'):
+			print "Hardy Weinberg filtering isn't implemented yet. Ignoring you."
+		if opt in ('--hweskip'):
+			print "No HWE? I like you."
+		if opt in ('--miss'):
+			skip = arg
+		if opt in ('-h','--help'):
+			print help
+			return 0
+
+	if len(args) > 2 or len(args) == 0:
+		print help
+		return 1
+
+	# Output files are a required argument
+	output = args.pop()
+	arff = open(output + ".arff", 'w')
+	stats = open(output + ".stats", 'w')
+
+	# We'll accept STDIN, if no input file is specified
+	if args:
+		input = open(args.pop(), 'r')
+	else:
+		input = sys.stdin
+
+	# Go do real work
+	a = ARFF(relation)
+	a.importPLINK(input)
+	a.filterMAF(maf, skip)
+	a.filterSampleMiss(imiss, skip)
+	a.filterSNPMiss(smiss, skip)
+	a.writeARFF(arff)
+
+	input.close()
+	arff.close()
+	stats.close()
+
+if __name__ == '__main__':
+	sys.exit(main(sys.argv))
