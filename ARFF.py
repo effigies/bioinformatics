@@ -1,3 +1,4 @@
+#!/usr/bin/env python
 #
 #  ARFF.py
 #  
@@ -55,6 +56,10 @@ class Date(Attribute):
 		return "Unimplemented"
 
 class ARFF:
+	p_rel = re.compile("@relation\s+",re.I)
+	p_attr = re.compile("@attribute\s+", re.I)
+	p_data = re.compile("@data\s+", re.I)
+
 	def __init__(self, name = "", attributes = [], data = [[]], comments = []):
 		self.name = name
 		self.attributes = attributes
@@ -67,12 +72,11 @@ class ARFF:
 		output.append("@relation %s" % self.name)
 		output.extend(["@attribute %s %s" % attr for attr in self.attributes])
 		output.append("@data")
-		output.extend([','.join(row) for row in data])
-
+		output.extend([','.join(row) for row in self.data])
 		return '\n'.join(output)
 		
 	def validate(self):
-		if self.name == "":
+		if not String().match(self.name):
 			raise ValueError("ARFF relation name must be defined.")
 
 		if not all([isinstance(attr, tuple) for attr in self.attributes]):
@@ -95,11 +99,24 @@ class ARFF:
 	def writeARFF(self,file):
 		file.write(self)
 
+	def parseARFF(self,file):
+		row = file.readline()
+		while row.startswith('%'):
+			self.comments.append(row[1:-1])
+			row = file.readline()
+			while row == '\n':
+				row = file.readline()
+
+		self.name = p_rel.sub("",row)
+			
+		while row[0] == '\n':
+			row = file.readline()
+
+		self.name
+
 def BioData:
 	def __init__(self, subjects = [], snps = [], genotypes = [], phenotypes = []):
 		self.subjects = subjects
 		self.snps = snps
 		self.genotypes = genotypes
 		self.phenotypes = phenotypes
-
-	
