@@ -20,6 +20,9 @@ class Attribute(object):
 			return True
 		return re.match(self.pattern, value) is not None
 
+	def __str__(self):
+		abstract
+
 class Numeric(Attribute):
 	"""Numeric attribute class. Matches integer or floating representations."""
 	pattern = re.compile("(\d+\.?|(\d+)?\.\d+)((e|E)(\-|\+)?\d+)?$")
@@ -62,7 +65,11 @@ class ARFF:
 		output = []
 		output.extend(["%% %s" % comment for comment in self.comments])
 		output.append("@relation %s" % self.name)
-		output.extend(["@attribute %s %s
+		output.extend(["@attribute %s %s" % attr for attr in self.attributes])
+		output.append("@data")
+		output.extend([','.join(row) for row in data])
+
+		return '\n'.join(output)
 		
 	def validate(self):
 		if self.name == "":
@@ -79,16 +86,20 @@ class ARFF:
 
 		if len(dataT) != len(self.attributes):
 			raise ValueError("Data rows must have same length as attributes.")
-		elif any([set(values).isdisjoint(valid) for (name,valid), values in zip(self.attributes, dataT)]):
+		elif not all([attr.match(val) for (_,attr), values in zip(self.attributes, dataT) for val in values]):
 			raise ValueError("Data rows may not have unexpected values.")
 
 		if not all([isinstance(comment,str) for comment in comments]):
 			raise ValueError("Comments must be strings.")
 
 	def writeARFF(self,file):
-		output = ["@RELATION %s" % self.relation]
-		for name, valid in self.attributes:
-			output.append("@ATTRIBUTE %s {%s}" % (name, ','.join(sorted(valid))))
-		output.append("@DATA")
-		output.extend([",".join(row) for row in self.data])
-		file.write('\n'.join(output))
+		file.write(self)
+
+def BioData:
+	def __init__(self, subjects = [], snps = [], genotypes = [], phenotypes = []):
+		self.subjects = subjects
+		self.snps = snps
+		self.genotypes = genotypes
+		self.phenotypes = phenotypes
+
+	
