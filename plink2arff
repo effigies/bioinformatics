@@ -8,6 +8,7 @@ from __future__ import division
 import sys
 import getopt
 from csv import reader as csvreader
+from itertools import izip as zip
 
 #
 # Matrix functions
@@ -89,7 +90,7 @@ Parameters
 		genotypes = [i[6:] for i in individuals]
 
 		# We could build our sets e
-		attributes = [(name, set(["0","1","2","NA"])) for name in snps]
+		attributes = [(name, set(("0","1","2","NA"))) for name in snps]
 		attributes.append(("CLASS", set(phenotypes)))
 
 		self.attributes = attributes
@@ -108,7 +109,7 @@ Parameters
 
 		for (name, valid), snps in zip(self.attributes, transpose(self.data)):
 			n = len(snps)<<1
-			s = sum([int(snp) for snp in snps if snp != skip])
+			s = sum(int(snp) for snp in snps if snp != skip)
 			if s / n >= threshold:
 				new_attr.append((name,valid))
 				new_data.append(snps)
@@ -123,7 +124,7 @@ Parameters
 
 		for sample in self.data:
 			n = len(sample)
-			s = len([s for s in sample if s == skip])
+			s = len(s)-s.count(skip)
 			if s / n <= threshold:
 				new_data.append(sample)
 
@@ -137,7 +138,7 @@ Parameters
 
 		for (name, valid), snps in zip(self.attributes, transpose(self.data)):
 			n = len(snps)
-			s = len([snp for snp in snps if snp == skip])
+			s = len(s)-s.count(skip)
 			if s / n <= threshold:
 				new_attr.append((name,valid))
 				new_data.append(snps)
